@@ -173,67 +173,6 @@ import xml.etree.ElementTree as ET
 # 群聊中移除用户示例
 """
 {
-    "UserName": {
-        "string": "xxx@chatroom"
-    },
-    "NickName": {
-        "string": "AITestGroup"
-    },
-    "PyInitial": {
-        "string": "AITESTGROUP"
-    },
-    "QuanPin": {
-        "string": "AITestGroup"
-    },
-    "Sex": 0,
-    "ImgBuf": {
-        "iLen": 0
-    },
-    "BitMask": 4294967295,
-    "BitVal": 2,
-    "ImgFlag": 1,
-    "Remark": {},
-    "RemarkPyinitial": {},
-    "RemarkQuanPin": {},
-    "ContactType": 0,
-    "RoomInfoCount": 0,
-    "DomainList": [
-        {}
-    ],
-    "ChatRoomNotify": 1,
-    "AddContactScene": 0,
-    "PersonalCard": 0,
-    "HasWeiXinHdHeadImg": 0,
-    "VerifyFlag": 0,
-    "Level": 0,
-    "Source": 0,
-    "ChatRoomOwner": "wxid_xxx",
-    "WeiboFlag": 0,
-    "AlbumStyle": 0,
-    "AlbumFlag": 0,
-    "SnsUserInfo": {
-        "SnsFlag": 0,
-        "SnsBgobjectId": 0,
-        "SnsFlagEx": 0
-    },
-    "CustomizedInfo": {
-        "BrandFlag": 0
-    },
-    "AdditionalContactList": {
-        "LinkedinContactItem": {}
-    },
-    "ChatroomMaxCount": 10037,
-    "DeleteFlag": 0,
-    "Description": "\b\u0002\u0012\u001c\n\u0013wxid_eacxxxx\u0001@\u0000�\u0001\u0000\u0012\u001c\n\u0013wxid_xxx\u0001@\u0000�\u0001\u0000\u0018\u0001\"\u0000(\u00008\u0000",
-    "ChatroomStatus": 4,
-    "Extflag": 0,
-    "ChatRoomBusinessType": 0
-}
-"""
-
-# 群聊中移除用户示例
-"""
-{
     "TypeName": "ModContacts",
     "Appid": "wx_xxx",
     "Data": {
@@ -298,7 +237,14 @@ import xml.etree.ElementTree as ET
 }
 """
 
+notes_join_group = ["加入群聊", "加入了群聊", "invited", "joined"]  # 可通过添加对应语言的加入群聊通知中的关键词适配更多
+notes_bot_join_group = ["邀请你", "invited you", "You've joined", "你通过扫描"]
+notes_exit_group = ["移出了群聊", "removed"]  # 可通过添加对应语言的踢出群聊通知中的关键词适配更多
+notes_patpat = ["拍了拍我", "tickled my", "tickled me"]  # 可通过添加对应语言的拍一拍通知中的关键词适配更多
+
+
 class GeWeChatMessage(ChatMessage):
+
     def __init__(self, msg, client: GewechatClient):
         super().__init__(msg)
         self.msg = msg
@@ -307,14 +253,12 @@ class GeWeChatMessage(ChatMessage):
             logger.warning(f"[gewechat] Missing 'Data' in message")
             return
         if 'NewMsgId' not in msg['Data']:
-            logger.warning(f"[gewechat] Missing 'NewMsgId' in message data")
+            # todo NewMsgI为空&&TypeName为"ModContacts"&&Data中的UserName包含@chatroot,可以将NickName存储到缓存map中，
+            #  后边hell.py就能够正常获取到群聊名称
+            logger.warning(f"[gewechat] Missing 'NewMsgId' in message data: {msg}")
             return
         self.msg_id = msg['Data']['NewMsgId']
         self.is_group = True if "@chatroom" in msg['Data']['FromUserName']['string'] else False
-
-        notes_join_group = ["加入群聊", "加入了群聊", "invited", "joined"]  # 可通过添加对应语言的加入群聊通知中的关键词适配更多
-        notes_bot_join_group = ["邀请你", "invited you", "You've joined", "你通过扫描"]
-
         self.client = client
         msg_type = msg['Data']['MsgType']
         self.app_id = conf().get("gewechat_app_id")
@@ -395,13 +339,28 @@ class GeWeChatMessage(ChatMessage):
             self.ctype = ContextType.STATUS_SYNC
             self.content = msg['Data']['Content']['string']
             return
+        elif msg_type == 47:  # 非文字的表情包
+            self.ctype = ContextType.TEXT
+            content = msg['Data']['Content']['string']
+            xml_content = msg['Data']['Content']['string'].split(':\n', 1)[1] if ':\n' in content else content
+            root = ET.fromstring(xml_content)
+            emoji_content = root.find('emoji').get('md5', '')
+            self.content = emoji_content
+        elif msg_type == 10000:  # 系统消息
+            content = msg['Data']['Content']['string']
+            if content in notes_exit_group:
+                if any(note_exit_group in content for note_exit_group in
+                       notes_exit_group):  # 若有任何在notes_exit_group列表中的字符串出现在NOTE中
+                    self.ctype = ContextType.EXIT_GROUP
+            self.content = content
         elif msg_type == 10002:  # Group System Message
             if self.is_group:
                 content = msg['Data']['Content']['string']
                 if any(note_bot_join_group in content for note_bot_join_group in notes_bot_join_group):  # 邀请机器人加入群聊
                     logger.warn("机器人加入群聊消息，不处理~")
                     pass
-                elif any(note_join_group in content for note_join_group in notes_join_group):  # 若有任何在notes_join_group列表中的字符串出现在NOTE中
+                elif any(note_join_group in content for note_join_group in
+                         notes_join_group):  # 若有任何在notes_join_group列表中的字符串出现在NOTE中
                     try:
                         # Extract the XML part after the chatroom ID
                         xml_content = content.split(':\n', 1)[1] if ':\n' in content else content
