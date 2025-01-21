@@ -10,6 +10,9 @@ from lib.gewechat import GewechatClient
 import requests
 import xml.etree.ElementTree as ET
 
+# 用于缓存群聊昵称的字典
+chatroom_nickname_cache = {}
+
 # 私聊信息示例
 """
 {
@@ -252,9 +255,17 @@ class GeWeChatMessage(ChatMessage):
         if not msg.get('Data'):
             logger.warning(f"[gewechat] Missing 'Data' in message")
             return
-        if 'NewMsgId' not in msg['Data']:
-            # todo NewMsgI为空&&TypeName为"ModContacts"&&Data中的UserName包含@chatroot,可以将NickName存储到缓存map中，
-            #  后边hell.py就能够正常获取到群聊名称
+        if 'NewMsgId' not in msg.get('Data', {}):
+            # 处理ModContacts类型消息，更新群聊昵称缓存
+            if msg.get("TypeName") == "ModContacts":
+                data = msg.get("Data", {})
+                username = data.get("UserName", {}).get("string", "")
+                if "@chatroom" in username:
+                    nickname = data.get("NickName", {}).get("string", "")
+                    if nickname:
+                        chatroom_nickname_cache[username] = nickname
+                        logger.debug(f"更新群聊昵称缓存: {username} -> {nickname}")
+                    return
             logger.warning(f"[gewechat] Missing 'NewMsgId' in message data: {msg}")
             return
         self.msg_id = msg['Data']['NewMsgId']
